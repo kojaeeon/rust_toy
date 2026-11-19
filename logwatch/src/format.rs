@@ -1,12 +1,16 @@
+//! 보관 중인 원문에서 SQL/XML을 찾아 상세 화면에 표시할 새 문자열을 만든다.
+
 use crate::parser::LogEvent;
 use quick_xml::{Reader, Writer, events::Event};
 
+// XML 토큰을 순서대로 Writer에 넘겨 들여쓴다. 루트가 정확히 하나이며 깊이가 0으로 끝나야 한다.
 fn xml(text: &str) -> Option<String> {
     let mut reader = Reader::from_str(text);
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     let mut depth: usize = 0;
     let mut roots = 0;
     loop {
+        // .ok()?는 읽기 오류를 None으로 바꾼다. 호출자가 원문을 보여 줄 수 있게 실패를 알린다.
         let event = reader.read_event().ok()?;
         match &event {
             Event::Start(_) => {
@@ -19,6 +23,7 @@ fn xml(text: &str) -> Option<String> {
                 depth = depth.checked_sub(1)?;
             }
             Event::Empty(_) if depth == 0 => roots += 1,
+            // 루트 밖에서는 공백만 허용한다. 루트 내부의 텍스트 공백과 엔티티는 그대로 전달된다.
             Event::Text(t) if depth == 0 && !t.as_ref().trim().is_empty() => {
                 return None;
             }
@@ -32,7 +37,7 @@ fn xml(text: &str) -> Option<String> {
     }
     String::from_utf8(writer.into_inner()).ok()
 }
-// Find the first complete root in one pass, without reparsing every XML line.
+// 같은 XML을 줄마다 다시 파싱하지 않고, 첫 루트가 끝나는 UTF-8 바이트 오프셋을 찾는다.
 fn xml_end(text: &str) -> Option<usize> {
     let mut reader = Reader::from_str(text);
     let mut depth = 0usize;
@@ -51,6 +56,7 @@ fn xml_end(text: &str) -> Option<usize> {
         }
     }
 }
+// 대표적인 SQL 시작 토큰을 찾는 휴리스틱이다. 전체 SQL 문법의 유효성은 검사하지 않는다.
 fn sql_start(line: &str) -> bool {
     let upper = line.trim().to_uppercase();
     [
@@ -66,16 +72,19 @@ fn sql_start(line: &str) -> bool {
         }
     })
 }
+/// 원문 모드에서는 저장한 문자열을 복제한다. 포맷 모드에서는 블록별 표시 형식을 만든다.
 pub fn detail(event: &LogEvent, formatted: bool) -> String {
     if !formatted {
         return event.raw.clone();
     }
+    // 파싱된 첫 줄 메시지와 원문 두 번째 줄 이후를 빌려 표시 후보로 묶는다.
     let mut parts = vec![event.message.as_str()];
     parts.extend(event.raw.lines().skip(1));
     let mut result = Vec::new();
     let mut i = 0;
     while i < parts.len() {
         let line = parts[i];
+        // 문장 앞이나 `] ` 접두사 뒤에서 SQL을 먼저 찾는다. 비교 연산자 `<`도 SQL에 등장할 수 있다.
         let sql_offset = if sql_start(line) {
             Some(0)
         } else {
@@ -87,6 +96,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
             let prefix = &line[..start];
             let mut end = i + 1;
             let mut block = line[start..].to_string();
+            // 다음 SQL 또는 메타데이터 줄 전까지 XML 후보를 모은다.
             while end < parts.len() {
                 let extra = parts[end];
                 if sql_start(extra)
@@ -101,7 +111,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
                 block.push_str(extra);
                 end += 1;
             }
-            // Stop at a completed XML root so a later payload stays separate.
+            // 첫 XML 루트 뒤의 텍스트와 다른 줄을 다음 블록에서 처리할 수 있게 경계를 되돌린다.
             let mut suffix = String::new();
             if let Some(bytes) = xml_end(&block) {
                 let consumed_lines = block[..bytes].bytes().filter(|b| *b == b'\n').count() + 1;
@@ -112,6 +122,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
             if !prefix.trim().is_empty() {
                 result.push(prefix.trim_end().to_string());
             }
+            // XML 파싱에 실패하면 안내와 수집한 블록을 보여 줘 조사에 필요한 내용을 남긴다.
             match xml(&block) {
                 Some(value) => result.push(value),
                 None => {
@@ -124,7 +135,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
             }
             i = end;
         } else {
-            // A request-id prefix is metadata; retain it while formatting an inline query.
+            // 같은 줄의 요청 ID 같은 접두사는 별도로 보존하고 SQL 부분만 정렬한다.
             if let Some(start) = sql_offset {
                 if start > 0 {
                     result.push(line[..start].trim().to_string());
@@ -143,6 +154,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
                     query.push('\n');
                     query.push_str(extra);
                 }
+                // 표시의 가독성을 위한 포맷이다. SQL을 실행하거나 `?`에 바인드 값을 대입하지 않는다.
                 result.push(sqlformat::format(
                     &query,
                     &sqlformat::QueryParams::None,
@@ -162,6 +174,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
 mod tests {
     use super::*;
     #[test]
+    // 정상 XML 들여쓰기, 닫는 태그 오류, 한글과 엔티티 및 공백 보존을 함께 검사한다.
     fn xml_formats_and_preserves_invalid() {
         assert!(
             xml("<response><id>1</id></response>")

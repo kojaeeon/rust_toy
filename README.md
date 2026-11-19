@@ -7,6 +7,10 @@
 | [hotkey](hotkey/) | Windows 단축키 도구 |
 | [logwatch](logwatch/) | Java·SQL·XML 로그를 실시간으로 검색하고 확인하는 터미널 뷰어 |
 
+## Rust 학습
+
+[Rust 개발 가이드](RUST_DEVELOPMENT_GUIDE.md)에서 프로젝트별 코드 읽는 순서, 소유권과 오류 처리, 빌드·테스트 명령과 연습 과제를 확인할 수 있습니다.
+
 ## Logwatch 실행
 
 ```powershell

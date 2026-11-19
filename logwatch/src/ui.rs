@@ -1,3 +1,5 @@
+//! App 상태를 Ratatui 위젯으로 그린다. 로그 문자열은 제어 문자를 걸러 화면에 전달한다.
+
 use crate::{
     app::App,
     parser::{Kind, Level},
@@ -12,6 +14,7 @@ use ratatui::{
 
 const MUTED: Color = Color::Rgb(139, 153, 171);
 const ACCENT: Color = Color::Rgb(102, 217, 204);
+/// 줄바꿈과 탭을 보존하면서 ESC 같은 제어 문자를 제거한다.
 pub fn safe(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
@@ -32,12 +35,14 @@ fn kind_color(kind: Kind) -> Color {
         Kind::Xml => Color::LightMagenta,
     }
 }
+// 제목을 String으로 넘겨 블록이 소유하게 한다. 반환값은 호출자의 지역 문자열을 빌리지 않는다.
 fn border(title: String, focus: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .title(title)
         .border_style(Style::default().fg(if focus { ACCENT } else { Color::DarkGray }))
 }
+// XML, 예외 스택, SQL 메타데이터는 줄 단위로 색칠한다. 일반 줄은 SQL 키워드만 표시한다.
 fn highlighted(text: &str) -> Line<'static> {
     let clean = safe(text);
     let trimmed = clean.trim_start();
@@ -65,6 +70,7 @@ fn highlighted(text: &str) -> Line<'static> {
         "DELETE", "JOIN", "LEFT", "RIGHT", "ON", "AND", "OR", "AS", "WITH", "GROUP", "LIMIT",
         "DESC", "ASC", "NULL",
     ];
+    // 토큰 경계 공백까지 보존해 서로 다른 색으로 그려도 문장 간격이 유지된다.
     for token in clean.split_inclusive(char::is_whitespace) {
         let word = token.trim().to_uppercase();
         spans.push(Span::styled(
@@ -79,6 +85,7 @@ fn highlighted(text: &str) -> Line<'static> {
     Line::from(spans)
 }
 pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
+    // 화면이 너무 작으면 본문을 그리지 않고 크기 안내를 표시한다.
     let area = frame.area();
     if area.width < 50 || area.height < 12 {
         frame.render_widget(
@@ -88,6 +95,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         );
         return;
     }
+    // 제목, 필터, 두 본문 패널, 상태, 단축키 안내 순으로 세로 공간을 배분한다.
     let rows = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(2),
@@ -134,6 +142,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             .wrap(Wrap { trim: false }),
         rows[1],
     );
+    // 설정이 좌우 배치여도 95열보다 좁으면 위아래로 표시한다.
     let bottom = app.bottom || area.width < 95;
     let ratio = (app.ratio * 100.0) as u16;
     let panes = Layout::default()
@@ -151,8 +160,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         .filtered
         .iter()
         .filter_map(|id| {
+            // ID가 연속으로 붙고 오래된 이벤트는 앞에서만 빠지므로 첫 ID와의 차이가 큐 인덱스다.
             let offset = id.checked_sub(app.parser.events.front()?.id)? as usize;
             let e = app.parser.events.get(offset)?;
+            // get은 범위나 UTF-8 경계가 맞지 않으면 None을 반환한다. 이 경우 원래 시간을 사용한다.
             let time = e.time.get(11..23).unwrap_or(&e.time);
             Some(ListItem::new(vec![
                 Line::from(vec![
@@ -170,6 +181,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             ]))
         })
         .collect();
+    // 위젯에 필요한 값은 이벤트 고유 ID가 아니라 필터 결과의 행 인덱스다.
     state.select(
         app.selected
             .and_then(|id| app.filtered.iter().position(|n| *n == id)),
@@ -194,6 +206,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             }),
         );
     }
+    // 상세 제목에 세대와 원본 파일 줄 범위를 표시해 원본에서 같은 이벤트를 찾을 수 있게 한다.
     let title = app.selected_event().map_or(" Detail ".to_string(), |e| {
         format!(
             " {} {} | {} | gen:{} lines:{}-{} ",
@@ -222,6 +235,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
     lines.extend(app.detail.lines().map(highlighted));
     let text = Text::from(lines);
     let block = border(title, app.detail_focus);
+    // 테두리 2칸을 뺀 내부 크기에서 줄바꿈 후 줄 수를 계산한다.
     let width = panes[1].width.saturating_sub(2).max(1);
     let height = panes[1].height.saturating_sub(2);
     let mut detail = Paragraph::new(text).block(block);
@@ -232,6 +246,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         .line_count(width)
         .saturating_sub(height as usize)
         .min(u16::MAX as usize) as u16;
+    // 창 크기나 줄바꿈이 변해도 스크롤이 본문 끝을 넘지 않게 제한한다.
     app.scroll = app.scroll.min(max_scroll);
     detail = detail.scroll((app.scroll, if app.wrap { 0 } else { app.horizontal }));
     frame.render_widget(detail, panes[1]);
@@ -253,6 +268,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         rows[3],
     );
     frame.render_widget(Paragraph::new(" / search  f level  t type  r request  Space follow  v raw  w wrap  l layout  ? help  q quit").style(Style::default().fg(ACCENT)), rows[4]);
+    // 도움말을 덮어 그리기 전에 겹치는 영역의 배경을 지운다.
     if app.help {
         let popup = Rect::new(
             area.x + area.width / 10,

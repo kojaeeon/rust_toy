@@ -1,3 +1,5 @@
+//! 공개 모듈을 조합해 파일 입력부터 파싱, 검색, 화면 렌더링까지 검증한다.
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use logwatch::{
     app::App,
@@ -12,19 +14,23 @@ use std::{
 };
 use tempfile::tempdir;
 
+// 운영 기본 시작 패턴을 재사용하고 테스트마다 이벤트 보관 한도만 바꾼다.
 fn parser(max: usize) -> Parser {
     Parser::new(&Multiline::default().start_pattern, max).unwrap()
 }
+// 기존 내용을 유지하며 바이트를 추가한다. UTF-8 문자의 일부만 쓰는 테스트도 가능하다.
 fn append(path: &std::path::Path, data: &[u8]) {
     let mut f = OpenOptions::new().append(true).open(path).unwrap();
     f.write_all(data).unwrap();
     f.flush().unwrap();
 }
+// 실제 터미널 없이 App의 키 이벤트 처리기를 호출한다.
 fn key(app: &mut App, code: KeyCode) {
     app.key(KeyEvent::new(code, KeyModifiers::NONE));
 }
 
 #[test]
+// 샘플 전체로 여러 줄 경계, 요청 ID, SQL 파라미터와 Java 예외 체인을 확인한다.
 fn sample_groups_payloads_stack_traces_and_requests() {
     let mut p = parser(100);
     for (i, line) in include_str!("../logs/application.log").lines().enumerate() {
@@ -56,6 +62,7 @@ fn sample_groups_payloads_stack_traces_and_requests() {
 }
 
 #[test]
+// SQL의 `<`를 XML 시작으로 오인하지 않고 같은 이벤트의 XML과 SQL을 모두 표시하는지 검증한다.
 fn mixed_payload_formatting_preserves_xml_text_and_sql_comparison() {
     let mut p = parser(10);
     let lines = [
@@ -82,6 +89,7 @@ fn mixed_payload_formatting_preserves_xml_text_and_sql_comparison() {
 }
 
 #[test]
+// 첫 폴링에는 한글 바이트 일부만 있다. 다음 폴링에서 CRLF까지 오면 온전한 문자열을 기대한다.
 fn append_waits_for_complete_utf8_and_crlf() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -98,6 +106,7 @@ fn append_waits_for_complete_utf8_and_crlf() {
 }
 
 #[test]
+// 잘림과 파일이 잠시 없는 교체를 차례로 재현하고 세대, 줄 번호, 미완성 줄의 초기화를 검사한다.
 fn truncate_and_replace_reset_line_numbers_and_pending_bytes() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -119,6 +128,7 @@ fn truncate_and_replace_reset_line_numbers_and_pending_bytes() {
 }
 
 #[test]
+// 길이가 같아도 읽기 위치 앞의 내용이 바뀌면 새 세대로 감지하는지 확인한다.
 fn same_length_overwrite_is_detected_by_anchor() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -132,6 +142,7 @@ fn same_length_overwrite_is_detected_by_anchor() {
 }
 
 #[test]
+// 최근 줄만 보관해도 실제 줄 번호를 유지하고, 스냅샷에서만 개행 없는 마지막 줄을 가져온다.
 fn initial_window_preserves_actual_line_numbers_and_dump_flushes_final_line() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -145,6 +156,7 @@ fn initial_window_preserves_actual_line_numbers_and_dump_flushes_final_line() {
 }
 
 #[test]
+// 한국어 인코딩에 이어 큰 줄의 메모리 제한과 비호환 인코딩 거절을 검사한다.
 fn cp949_and_oversized_lines_are_bounded() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -162,6 +174,7 @@ fn cp949_and_oversized_lines_are_bounded() {
 }
 
 #[test]
+// 오래된 이벤트를 제거해도 ID는 유지되고 새 세대의 고아 줄은 이전 이벤트에 붙지 않는다.
 fn ring_eviction_and_rotation_never_merge_old_event() {
     let mut p = parser(2);
     for i in 1..=3 {
@@ -181,6 +194,7 @@ fn ring_eviction_and_rotation_never_merge_old_event() {
 }
 
 #[test]
+// 추적 해제 후에도 입력이 쌓이고 검색·요청 ID·최소 레벨 필터가 선택을 올바르게 바꾸는지 검사한다.
 fn hold_keeps_selection_while_ingestion_and_search_continue() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -224,6 +238,7 @@ fn hold_keeps_selection_while_ingestion_and_search_continue() {
 }
 
 #[test]
+// 임시 TOML 위치를 기준으로 상대 경로를 해석한다. 허용 범위 위반과 필드 오타는 오류다.
 fn config_paths_are_relative_to_toml_and_invalid_settings_fail() {
     let d = tempdir().unwrap();
     let config = d.path().join("viewer.toml");
@@ -239,6 +254,7 @@ fn config_paths_are_relative_to_toml_and_invalid_settings_fail() {
 }
 
 #[test]
+// 메모리 화면으로 폭이 다른 창, 결과가 없는 목록, 제어 문자 제거를 확인한다.
 fn render_wide_narrow_empty_and_detail_scrolling() {
     let d = tempdir().unwrap();
     let path = d.path().join("app.log");
@@ -259,6 +275,7 @@ fn render_wide_narrow_empty_and_detail_scrolling() {
         terminal
             .draw(|f| logwatch::ui::draw(f, &mut app, &mut state))
             .unwrap();
+        // 셀의 표시 문자를 하나의 문자열로 모아 화면에 어떤 글자가 남았는지 확인한다.
         let screen: String = terminal
             .backend()
             .buffer()
