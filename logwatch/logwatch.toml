@@ -1,0 +1,16 @@
+[viewer]
+layout = "right" # right / bottom; toggle with l
+detail_ratio = 0.60
+follow = true
+max_events = 50000
+initial_lines = 200
+poll_ms = 200
+wrap = false
+
+[[sources]]
+name = "example"
+path = "./logs/application.log" # relative to this TOML file
+encoding = "utf-8" # utf-8 / euc-kr (CP949) / windows-1252
+
+[sources.multiline]
+start_pattern = '^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}'

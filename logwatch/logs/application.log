@@ -1,0 +1,83 @@
+2026-11-20 14:32:00.001 INFO  [main] com.example.Application - Application started in 1.284 seconds
+2026-11-20 14:32:00.015 INFO  [main] com.example.LogConfig - 로그 출력 인코딩: UTF-8
+2026-11-20 14:32:07.101 INFO  [http-nio-8080-exec-1] com.example.OrderController - [requestId=req-001] 주문 조회 요청 customerId=10042
+2026-11-20 14:32:07.108 DEBUG [http-nio-8080-exec-1] com.example.OrderService - [requestId=req-001] 고객 주문 조회 시작
+2026-11-20 14:32:08.125 DEBUG [http-nio-8080-exec-1] jdbc.sqltiming - [requestId=req-001] SQL 실행
+SELECT
+    customer_id,
+    customer_name,
+    order_amount
+FROM orders
+WHERE customer_id = ?
+ORDER BY created_at DESC
+Parameters: [10042]
+Elapsed: 23ms
+Rows: 2
+2026-11-20 14:32:08.151 INFO  [http-nio-8080-exec-1] com.example.XmlGateway - [requestId=req-001] 응답 XML
+<?xml version="1.0" encoding="UTF-8"?>
+<response>
+    <result>SUCCESS</result>
+    <customer>
+        <id>10042</id>
+        <name>홍길동</name>
+    </customer>
+    <orders>
+        <order id="ORD-001">
+            <amount currency="KRW">32000</amount>
+            <memo>배송 전 연락 &amp; 문 앞 보관</memo>
+        </order>
+        <order id="ORD-002">
+            <amount currency="KRW">18500</amount>
+            <memo><![CDATA[선물 포장 <요청>]]></memo>
+        </order>
+    </orders>
+</response>
+2026-11-20 14:32:08.155 INFO  [http-nio-8080-exec-1] com.example.OrderController - [requestId=req-001] 요청 처리 완료 status=200 elapsedMs=1054
+2026-11-20 14:32:09.010 INFO  [http-nio-8080-exec-2] com.example.OrderController - [requestId=req-002] 주문 조회 요청 customerId=10043
+2026-11-20 14:32:09.025 DEBUG [http-nio-8080-exec-2] org.hibernate.SQL - [requestId=req-002] select id, status from orders where customer_id = ?
+2026-11-20 14:32:09.201 ERROR [http-nio-8080-exec-2] com.example.OrderService - [requestId=req-002] 주문 조회 실패 SQLState=08006
+java.sql.SQLException: Connection closed
+    at com.example.OrderRepository.find(OrderRepository.java:82)
+    at com.example.OrderService.search(OrderService.java:41)
+    at com.example.OrderController.search(OrderController.java:29)
+Caused by: java.net.SocketException: Connection reset
+    at java.base/sun.nio.ch.NioSocketImpl.implRead(NioSocketImpl.java:318)
+    at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:346)
+    ... 3 more
+2026-11-20 14:32:09.205 WARN  [http-nio-8080-exec-2] com.example.DatabaseRetry - [requestId=req-002] DB 연결 재시도 attempt=1 maxAttempts=3 delayMs=500
+2026-11-20 14:32:09.710 INFO  [http-nio-8080-exec-2] com.example.DatabaseRetry - [requestId=req-002] DB 재연결 성공
+2026-11-20 14:32:09.712 DEBUG [http-nio-8080-exec-2] jdbc.sqltiming - [requestId=req-002] SQL 재실행
+SELECT id, status
+FROM orders
+WHERE customer_id = ?
+Parameters: [10043]
+Elapsed: 12ms
+Rows: 0
+2026-11-20 14:32:09.726 INFO  [http-nio-8080-exec-2] com.example.OrderController - [requestId=req-002] 요청 처리 완료 status=200 resultCount=0
+2026-11-20 14:32:10.001 INFO  [http-nio-8080-exec-3] com.example.XmlGateway - [requestId=req-003] 외부 시스템 요청 XML
+<request service="customer-search">
+    <keyword>김민수</keyword>
+    <page>1</page>
+</request>
+2026-11-20 14:32:10.010 INFO  [http-nio-8080-exec-4] com.example.HealthController - [requestId=req-004] 상태 확인 status=UP
+2026-11-20 14:32:10.520 WARN  [http-nio-8080-exec-3] com.example.XmlGateway - [requestId=req-003] 외부 응답 지연 elapsedMs=519 thresholdMs=500
+2026-11-20 14:32:10.701 INFO  [http-nio-8080-exec-3] com.example.XmlGateway - [requestId=req-003] 응답 수신 payload=<response><result>SUCCESS</result><count>1</count></response>
+2026-11-20 14:32:11.002 DEBUG [http-nio-8080-exec-5] com.example.OrderRepository - [requestId=req-005] 주문 저장 준비
+SQL:
+INSERT INTO orders (id, customer_id, order_amount, status)
+VALUES (?, ?, ?, ?)
+Parameters: ['ORD-003', 10042, 45000, 'PENDING']
+2026-11-20 14:32:11.020 INFO  [http-nio-8080-exec-5] com.example.OrderRepository - [requestId=req-005] 주문 저장 완료 affectedRows=1 elapsedMs=18
+2026-11-20 14:32:12.001 WARN  [http-nio-8080-exec-6] com.example.XmlGateway - [requestId=req-006] 잘린 XML 수신: 원문 확인 필요
+<response>
+    <result>SUCCESS</result>
+    <customer>
+        <id>10044</id>
+        <name>이
+2026-11-20 14:32:12.010 ERROR [http-nio-8080-exec-6] com.example.XmlGateway - [requestId=req-006] XML 파싱 실패
+org.xml.sax.SAXParseException: XML document structures must start and end within the same entity.
+    at com.example.XmlParser.parse(XmlParser.java:57)
+    at com.example.XmlGateway.receive(XmlGateway.java:113)
+2026-11-20 14:32:13.001 TRACE [scheduler-1] com.example.MetricsCollector - 메트릭 수집 시작
+2026-11-20 14:32:13.005 DEBUG [scheduler-1] com.example.MetricsCollector - activeConnections=2 idleConnections=8 queuedRequests=0
+2026-11-20 14:32:13.010 INFO  [scheduler-1] com.example.MetricsCollector - 메트릭 수집 완료 heapUsedMb=128

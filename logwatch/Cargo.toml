@@ -1,0 +1,20 @@
+[package]
+name = "logwatch"
+version = "0.1.0"
+edition = "2024"
+description = "Live terminal viewer for Java, SQL and XML logs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+encoding_rs = "0.8"
+quick-xml = "0.42"
+ratatui = { version = "0.30.2", features = ["unstable-rendered-line-info"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+sqlformat = "0.5"
+toml = "0.9"
+
+[dev-dependencies]
+tempfile = "3"
