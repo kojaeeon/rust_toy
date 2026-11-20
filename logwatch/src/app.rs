@@ -27,14 +27,15 @@ pub struct App {
     pub scroll: u16,
     pub horizontal: u16,
     pub formatted: bool,
+    pub xml_only: bool,
     pub wrap: bool,
     pub bottom: bool,
     pub ratio: f64,
     pub help: bool,
     pub status: String,
     pub detail: String,
-    // 상세 캐시의 키는 (이벤트 ID, 원문 바이트 길이, 포맷 여부)다.
-    detail_key: Option<(u64, usize, bool)>,
+    // 상세 캐시의 키는 (이벤트 ID, 원문 바이트 길이, 포맷 여부, XML 보기 여부)다.
+    detail_key: Option<(u64, usize, bool, bool)>,
 }
 impl App {
     pub fn new(parser: Parser, tail: Tail, path: String, viewer: &Viewer) -> Self {
@@ -54,6 +55,7 @@ impl App {
             scroll: 0,
             horizontal: 0,
             formatted: true,
+            xml_only: false,
             wrap: viewer.wrap,
             bottom: viewer.layout == "bottom",
             ratio: viewer.detail_ratio,
@@ -77,7 +79,13 @@ impl App {
             .iter()
             .filter(|e| {
                 e.level >= min
-                    && kind.is_none_or(|k| e.kind == k)
+                    && kind.is_none_or(|k| {
+                        if k == Kind::Xml {
+                            e.has_xml
+                        } else {
+                            e.kind == k
+                        }
+                    })
                     && self.request.as_ref().is_none_or(|r| &e.request == r)
                     && e.search.contains(&query)
             })
@@ -106,11 +114,17 @@ impl App {
     fn update_detail(&mut self) {
         let key = self
             .selected_event()
-            .map(|e| (e.id, e.raw.len(), self.formatted));
+            .map(|e| (e.id, e.raw.len(), self.formatted, self.xml_only));
         if self.detail_key != key {
             self.detail = self
                 .selected_event()
-                .map(|e| format::detail(e, self.formatted))
+                .map(|e| {
+                    if self.xml_only {
+                        format::xml_detail(&e.raw)
+                    } else {
+                        format::detail(e, self.formatted)
+                    }
+                })
                 .unwrap_or_default();
             self.detail_key = key;
         }
@@ -220,7 +234,18 @@ impl App {
                 self.refresh();
             }
             KeyCode::Char('v') => {
-                self.formatted = !self.formatted;
+                if self.xml_only {
+                    self.xml_only = false;
+                    self.formatted = false;
+                } else {
+                    self.formatted = !self.formatted;
+                }
+                self.update_detail();
+                self.scroll = 0;
+                self.horizontal = 0;
+            }
+            KeyCode::Char('x') => {
+                self.xml_only = !self.xml_only;
                 self.update_detail();
                 self.scroll = 0;
                 self.horizontal = 0;

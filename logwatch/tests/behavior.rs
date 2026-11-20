@@ -116,6 +116,46 @@ fn xml_in_multiline_jdbc_insert_is_preserved_as_sql() {
 }
 
 #[test]
+fn xml_filter_and_detail_include_jdbc_payloads_and_preserve_the_full_event() {
+    let mut parser = parser(10);
+    let sql = "2026-11-20 11:09:15,987 INFO [jdbc.sqlonly.sqlOccurred(741)] SQL::INSERT INTO audit_log VALUES ('<Dataset><Row>hello</Row></Dataset>', '<Meta id=\"other\"/>')";
+    parser.push(sql, 1, 1);
+    parser.push("2026-11-20 11:09:16,000 INFO [jdbc.sqlonly.sqlOccurred(741)] SQL::SELECT id FROM audit_log WHERE id < 100", 2, 1);
+    parser.push(
+        "2026-11-20 11:09:17,000 INFO demo - response: <Response",
+        3,
+        1,
+    );
+    parser.push(" status=\"pending\">", 4, 1);
+    assert!(parser.events[2].has_xml);
+    parser.push("<Child/>", 5, 1);
+
+    assert_eq!(parser.events[0].kind, Kind::Sql);
+    assert!(parser.events[0].has_xml);
+    assert!(!parser.events[1].has_xml);
+    let tail = Tail::new("unused.log".into(), "utf-8").unwrap();
+    let mut app = App::new(parser, tail, "unused.log".into(), &Viewer::default());
+    for _ in 0..3 {
+        key(&mut app, KeyCode::Char('t'));
+    }
+    assert_eq!(app.filtered, vec![1, 3]);
+    key(&mut app, KeyCode::Home);
+    key(&mut app, KeyCode::Char('x'));
+    assert!(
+        app.detail
+            .contains("<Dataset>\n  <Row>hello</Row>\n</Dataset>")
+    );
+    assert!(app.detail.contains("<Meta id=\"other\"/>"));
+    assert!(!app.detail.contains("INSERT"));
+    key(&mut app, KeyCode::Char('v'));
+    assert_eq!(app.detail, sql);
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Char('x'));
+    assert!(app.detail.contains("incomplete/invalid"));
+    assert!(app.detail.contains("<Child/>"));
+}
+
+#[test]
 fn jdbc_cte_with_column_list_reaches_detail_end_without_truncation() {
     let mut parser = parser(10);
     let header = "2026-11-20 11:01:58,941 INFO [jdbc.sqlonly.sqlOccurred(741)] SQL::WITH TEMP1 (";

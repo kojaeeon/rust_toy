@@ -1,5 +1,6 @@
 //! 여러 로그 줄을 이벤트로 묶고 Java 헤더, 요청 ID, 본문 유형을 추출한다.
 
+use crate::format::xml_offset;
 use regex::Regex;
 use std::collections::VecDeque;
 
@@ -56,6 +57,7 @@ pub struct LogEvent {
     // 디코딩 후 줄을 연결한 텍스트. 표시용 포맷과 검색용 소문자 문자열은 이 값에서 만든다.
     pub raw: String,
     pub kind: Kind,
+    pub has_xml: bool,
     pub search: String,
 }
 pub struct Parser {
@@ -131,6 +133,7 @@ impl Parser {
                 .request
                 .captures(line)
                 .map_or(String::new(), |c| c[1].to_string());
+            let has_xml = xml_offset(line).is_some();
             let event = LogEvent {
                 id: self.next_id,
                 generation,
@@ -143,6 +146,7 @@ impl Parser {
                 message,
                 raw: line.to_string(),
                 kind: Kind::Java,
+                has_xml,
                 search: String::new(),
             };
             self.next_id += 1;
@@ -158,6 +162,7 @@ impl Parser {
             if event.raw.len() + line.len() < 256 * 1024 {
                 event.raw.push('\n');
                 event.raw.push_str(line);
+                event.has_xml |= xml_offset(&event.raw).is_some();
             } else {
                 self.truncated += 1;
             }
@@ -175,13 +180,7 @@ impl Parser {
                     .any(|l| self.sql.is_match(l.trim()))
             {
                 Kind::Sql
-            } else if event.message.contains('<')
-                || event
-                    .raw
-                    .lines()
-                    .skip(1)
-                    .any(|l| l.trim_start().starts_with('<'))
-            {
+            } else if event.has_xml {
                 Kind::Xml
             } else {
                 Kind::Java

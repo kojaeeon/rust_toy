@@ -56,12 +56,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\replay.ps1 -Repeat
 | Enter / Esc | 검색 입력 완료; 입력 중 Ctrl+U로 검색어 삭제 |
 | Esc (검색 입력 밖) | 검색어·요청 ID 필터 해제 |
 | f | 전체 → INFO 이상 → WARN 이상 → ERROR |
-| t | 전체 → JAVA → SQL → XML |
+| t | 전체 → JAVA → SQL → XML (SQL 안의 XML 포함) |
 | r | 선택 이벤트의 requestId/traceId로 필터; 다시 누르면 해제 |
 | Tab | 목록/상세에 키보드 초점 이동 |
 | 상세 영역의 ↑↓ / PgUp PgDn / Home End | 본문 스크롤 / 처음·끝으로 이동 |
 | 상세 영역의 ←→ | 줄바꿈을 껐을 때 가로 스크롤 |
-| v | 포맷 보기/원문 전환 |
+| v | 포맷 보기/원문 전환. XML 모드에서는 전체 원문으로 이동 |
+| x | 선택 이벤트의 XML만 추출해 표시 / 전체 이벤트 보기 |
 | w | 상세 본문 줄바꿈 전환 |
 | l | 좌우/상하 배치 전환 |
 | ? / F1 | 도움말 |

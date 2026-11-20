@@ -83,11 +83,46 @@ fn sql_offset(line: &str) -> Option<usize> {
     })
 }
 
-fn xml_offset(line: &str) -> Option<usize> {
+pub(crate) fn xml_offset(line: &str) -> Option<usize> {
     line.match_indices('<').find_map(|(offset, _)| {
-        let next = line[offset + 1..].chars().next()?;
-        (next.is_alphabetic() || matches!(next, '_' | ':' | '/' | '?' | '!')).then_some(offset)
+        let rest = &line[offset + 1..];
+        if rest.starts_with("?xml") || rest.starts_with("!--") || rest.starts_with("!DOCTYPE") {
+            return Some(offset);
+        }
+        let mut name = rest.strip_prefix('/').unwrap_or(rest).chars();
+        let first = name.next()?;
+        if !(first.is_alphabetic() || matches!(first, '_' | ':')) {
+            return None;
+        }
+        let delimiter =
+            name.find(|ch| !ch.is_alphanumeric() && !matches!(ch, '_' | ':' | '.' | '-'));
+        delimiter
+            .is_some_and(|ch| ch.is_whitespace() || matches!(ch, '>' | '/'))
+            .then_some(offset)
     })
+}
+
+/// Extract XML directly from the original event, including XML inside a SQL value.
+pub fn xml_detail(raw: &str) -> String {
+    let mut remaining = raw;
+    let mut documents = Vec::new();
+    while let Some(start) = xml_offset(remaining) {
+        let candidate = &remaining[start..];
+        let Some(end) = xml_end(candidate) else {
+            documents.push(format!(
+                "[XML incomplete/invalid: original payload below]\n{candidate}"
+            ));
+            break;
+        };
+        let payload = &candidate[..end];
+        documents.push(xml(payload).unwrap_or_else(|| payload.to_string()));
+        remaining = &candidate[end..];
+    }
+    if documents.is_empty() {
+        "No XML payload in this event. Press x to return to the full event.".into()
+    } else {
+        documents.join("\n\n")
+    }
 }
 
 #[derive(Clone, Copy, Default)]

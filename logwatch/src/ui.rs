@@ -279,6 +279,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
                         Style::default().fg(level_color(e.level)),
                     ),
                     Span::styled(e.kind.label(), Style::default().fg(kind_color(e.kind))),
+                    Span::styled(
+                        if e.has_xml && e.kind != Kind::Xml {
+                            " +XML"
+                        } else {
+                            ""
+                        },
+                        Style::default().fg(kind_color(Kind::Xml)),
+                    ),
                 ]),
                 Line::styled(
                     format!("  {}", safe(&e.message)),
@@ -318,7 +326,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             " {} {} | {} | gen:{} lines:{}-{} ",
             e.level.label(),
             e.kind.label(),
-            if app.formatted { "FORMATTED" } else { "RAW" },
+            if app.xml_only {
+                "XML ONLY"
+            } else if app.formatted {
+                "FORMATTED"
+            } else {
+                "RAW"
+            },
             e.generation,
             e.first_line,
             e.last_line
@@ -383,7 +397,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         Paragraph::new(note).style(Style::default().fg(MUTED)),
         rows[3],
     );
-    frame.render_widget(Paragraph::new(" / search  f level  t type  r request  Space follow  v raw  w wrap  l layout  ? help  q quit").style(Style::default().fg(ACCENT)), rows[4]);
+    frame.render_widget(Paragraph::new(" / search  f level  t type  r request  Space follow  v raw  x XML  w wrap  l layout  ? help  q quit").style(Style::default().fg(ACCENT)), rows[4]);
     // 도움말을 덮어 그리기 전에 겹치는 영역의 배경을 지운다.
     if app.help {
         let popup = Rect::new(
@@ -393,7 +407,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             area.height.saturating_sub(2),
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new("↑/↓ or j/k: select event; disables follow\nHome / End: oldest / newest (resume follow)\nTab: switch list / detail focus\nDetail: ↑↓ scroll, ←→ horizontal, PgUp/PgDn page, Home/End first/last\n/: edit search (case-insensitive, full raw event)\nEnter/Esc: finish search; Ctrl+U: clear while editing\nEsc outside search: clear search and request filter\nf: ALL → INFO+ → WARN+ → ERROR\nt: ALL → JAVA → SQL → XML\nr: filter by selected request/trace ID; press again to clear\nSpace: follow latest on/off (ingestion always continues)\nv: formatted / raw; w: wrap; l: right / bottom layout\nq or Ctrl+C: quit\n\nRaw bytes decoded by configured encoding. XML folding is not yet supported.\nPress any key to close.")
+        frame.render_widget(Paragraph::new("↑/↓ or j/k: select event; disables follow\nHome / End: oldest / newest (resume follow)\nTab: switch list / detail focus\nDetail: ↑↓ scroll, ←→ horizontal, PgUp/PgDn page, Home/End first/last\n/: edit search (case-insensitive, full raw event)\nEnter/Esc: finish search; Ctrl+U: clear while editing\nEsc outside search: clear search and request filter\nf: ALL → INFO+ → WARN+ → ERROR\nt: ALL → JAVA → SQL → XML (includes SQL with XML)\nr: filter by selected request/trace ID; press again to clear\nSpace: follow latest on/off (ingestion always continues)\nv: formatted / raw; x: XML only; w: wrap; l: right / bottom layout\nq or Ctrl+C: quit\n\nRaw bytes decoded by configured encoding. XML folding is not yet supported.\nPress any key to close.")
             .block(border(" Keys ".into(), true)).wrap(Wrap { trim: false }), popup);
     }
 }
