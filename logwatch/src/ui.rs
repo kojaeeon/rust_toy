@@ -380,7 +380,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         .block(border(title, app.detail_focus))
         .scroll((app.scroll, if app.wrap { 0 } else { app.horizontal }));
     frame.render_widget(detail, panes[1]);
-    let note = if !app.status.is_empty() {
+    let note = if let Some(message) = app.copy_notice() {
+        message.to_string()
+    } else if !app.status.is_empty() {
         safe(&app.status)
     } else {
         format!(
@@ -397,7 +399,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         Paragraph::new(note).style(Style::default().fg(MUTED)),
         rows[3],
     );
-    frame.render_widget(Paragraph::new(" / search  f level  t type  r request  Space follow  v raw  x XML  w wrap  l layout  ? help  q quit").style(Style::default().fg(ACCENT)), rows[4]);
+    frame.render_widget(Paragraph::new(" / search  f level  t type  r request  Space follow  v raw  x XML  y copy  w wrap  l layout  ? help  q quit").style(Style::default().fg(ACCENT)), rows[4]);
     // 도움말을 덮어 그리기 전에 겹치는 영역의 배경을 지운다.
     if app.help {
         let popup = Rect::new(
@@ -407,7 +409,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             area.height.saturating_sub(2),
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new("↑/↓ or j/k: select event; disables follow\nHome / End: oldest / newest (resume follow)\nTab: switch list / detail focus\nDetail: ↑↓ scroll, ←→ horizontal, PgUp/PgDn page, Home/End first/last\n/: edit search (case-insensitive, full raw event)\nEnter/Esc: finish search; Ctrl+U: clear while editing\nEsc outside search: clear search and request filter\nf: ALL → INFO+ → WARN+ → ERROR\nt: ALL → JAVA → SQL → XML (includes SQL with XML)\nr: filter by selected request/trace ID; press again to clear\nSpace: follow latest on/off (ingestion always continues)\nv: formatted / raw; x: XML only; w: wrap; l: right / bottom layout\nq or Ctrl+C: quit\n\nRaw bytes decoded by configured encoding. XML folding is not yet supported.\nPress any key to close.")
+        frame.render_widget(Paragraph::new("↑/↓ or j/k: select event; disables follow\nHome / End: oldest / newest (resume follow)\nTab: switch list / detail focus\nDetail: ↑↓ scroll, ←→ horizontal, PgUp/PgDn page, Home/End first/last\n/: edit search (case-insensitive, full raw event)\nEnter/Esc: finish search; Ctrl+U: clear while editing\nEsc outside search: clear search and request filter\nf: ALL → INFO+ → WARN+ → ERROR\nt: ALL → JAVA → SQL → XML (includes SQL with XML)\nr: filter by selected request/trace ID; press again to clear\nSpace: follow latest on/off (ingestion always continues)\nv: formatted / raw; x: XML only; y: copy detail; w: wrap; l: right / bottom layout\nq or Ctrl+C: quit\n\nRaw bytes decoded by configured encoding. XML folding is not yet supported.\nPress any key to close.")
             .block(border(" Keys ".into(), true)).wrap(Wrap { trim: false }), popup);
     }
 }

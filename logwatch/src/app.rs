@@ -1,6 +1,7 @@
 //! 파일 폴링과 키 입력을 조율하고 필터, 선택, 스크롤 등 화면 상태를 관리한다.
 
 use crate::{
+    clipboard,
     config::Viewer,
     format,
     parser::{Kind, Level, Parser},
@@ -8,6 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::time::{Duration, Instant};
 
 // Parser는 이벤트 저장, Tail은 파일 읽기, App은 사용자가 보는 상태를 맡는다.
 pub struct App {
@@ -33,6 +35,7 @@ pub struct App {
     pub ratio: f64,
     pub help: bool,
     pub status: String,
+    copy_status: Option<(Instant, String)>,
     pub detail: String,
     // 상세 캐시의 키는 (이벤트 ID, 원문 바이트 길이, 포맷 여부, XML 보기 여부)다.
     detail_key: Option<(u64, usize, bool, bool)>,
@@ -61,6 +64,7 @@ impl App {
             ratio: viewer.detail_ratio,
             help: false,
             status: String::new(),
+            copy_status: None,
             detail: String::new(),
             detail_key: None,
         };
@@ -120,7 +124,7 @@ impl App {
                 .selected_event()
                 .map(|e| {
                     if self.xml_only {
-                        format::xml_detail(&e.raw)
+                        format::xml_detail(&e.raw, true)
                     } else {
                         format::detail(e, self.formatted)
                     }
@@ -128,6 +132,25 @@ impl App {
                 .unwrap_or_default();
             self.detail_key = key;
         }
+    }
+    pub fn copy_text(&self) -> Option<String> {
+        let event = self.selected_event()?;
+        if self.xml_only && !event.has_xml {
+            return None;
+        }
+        let text = if self.xml_only {
+            crate::ui::safe(&format::xml_detail(&event.raw, false))
+        } else {
+            crate::ui::safe(&self.detail)
+        };
+        (!text.is_empty()).then_some(text)
+    }
+
+    pub fn copy_notice(&self) -> Option<&str> {
+        self.copy_status
+            .as_ref()
+            .filter(|(when, _)| when.elapsed() < Duration::from_secs(4))
+            .map(|(_, message)| message.as_str())
     }
     /// 읽기 오류는 상태 줄에 남기고 다음 폴링에서 다시 시도한다.
     pub fn poll(&mut self) {
@@ -250,6 +273,16 @@ impl App {
                 self.scroll = 0;
                 self.horizontal = 0;
             }
+            KeyCode::Char('y') => {
+                let message = match self.copy_text() {
+                    Some(text) => match clipboard::copy(&text) {
+                        Ok(()) => "Copied detail to clipboard".into(),
+                        Err(error) => format!("Clipboard copy failed: {error}"),
+                    },
+                    None => "No detail to copy".into(),
+                };
+                self.copy_status = Some((Instant::now(), message));
+            }
             KeyCode::Char('w') => {
                 self.wrap = !self.wrap;
                 self.scroll = 0;
@@ -284,7 +317,6 @@ impl App {
     /// 화면 그리기, 입력 대기, 주기적 파일 읽기를 한 루프에서 수행한다.
     pub fn run(&mut self, terminal: &mut ratatui::DefaultTerminal, poll_ms: u64) -> Result<()> {
         use crossterm::event::{self, Event, KeyEventKind};
-        use std::time::{Duration, Instant};
         let interval = Duration::from_millis(poll_ms);
         let mut last = Instant::now();
         let mut list_state = ratatui::widgets::ListState::default();

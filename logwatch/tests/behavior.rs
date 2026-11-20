@@ -147,12 +147,31 @@ fn xml_filter_and_detail_include_jdbc_payloads_and_preserve_the_full_event() {
     );
     assert!(app.detail.contains("<Meta id=\"other\"/>"));
     assert!(!app.detail.contains("INSERT"));
+    assert_eq!(app.copy_text().as_deref(), Some(app.detail.as_str()));
     key(&mut app, KeyCode::Char('v'));
     assert_eq!(app.detail, sql);
+    assert_eq!(app.copy_text().as_deref(), Some(sql));
     key(&mut app, KeyCode::Down);
     key(&mut app, KeyCode::Char('x'));
     assert!(app.detail.contains("incomplete/invalid"));
     assert!(app.detail.contains("<Child/>"));
+    let copy = app.copy_text().unwrap();
+    assert!(copy.starts_with("<Response"));
+    assert!(copy.contains("\n  <Child/>"));
+    assert!(!copy.contains("incomplete/invalid"));
+}
+
+#[test]
+fn truncated_dataset_keeps_readable_nested_tags_and_the_original_damaged_tail() {
+    let raw = "SQL::INSERT INTO SAMPLE VALUES ('<Dataset id=\"sample\"><ColumnInfo><Column id=\"KEY\"/><Column id=\"VALUE\"/></ColumnInfo><Rows><Row><Col>한글 &amp; 값</Col><Col id=\"cut";
+    let formatted = logwatch::format::xml_detail(raw, true);
+    assert!(formatted.contains("incomplete/invalid"));
+    assert!(formatted.contains(
+        "  <ColumnInfo>\n    <Column id=\"KEY\"/>\n    <Column id=\"VALUE\"/>\n  </ColumnInfo>"
+    ));
+    assert!(formatted.contains("      <Col>한글 &amp; 값</Col>"));
+    assert!(formatted.ends_with("<Col id=\"cut"));
+    assert!(!formatted.contains("</Dataset>"));
 }
 
 #[test]

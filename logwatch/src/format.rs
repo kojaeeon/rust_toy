@@ -3,15 +3,20 @@
 use crate::parser::LogEvent;
 use quick_xml::{Reader, Writer, events::Event};
 
-// XML 토큰을 순서대로 Writer에 넘겨 들여쓴다. 루트가 정확히 하나이며 깊이가 0으로 끝나야 한다.
-fn xml(text: &str) -> Option<String> {
+const XML_WARNING: &str = "[XML incomplete/invalid: formatted prefix and original remainder below]";
+
+// 읽을 수 있는 토큰은 들여쓰고, 처음 오류가 난 위치부터는 원문을 보존한다.
+fn format_xml(text: &str) -> (String, bool) {
     let mut reader = Reader::from_str(text);
     let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
     let mut depth: usize = 0;
     let mut roots = 0;
-    loop {
-        // .ok()?는 읽기 오류를 None으로 바꾼다. 호출자가 원문을 보여 줄 수 있게 실패를 알린다.
-        let event = reader.read_event().ok()?;
+    let mut consumed = 0;
+    let mut complete = false;
+    let mut after_start = false;
+    let normalize_spacing = !text.contains("xml:space");
+    while let Ok(event) = reader.read_event() {
+        let position = reader.buffer_position() as usize;
         match &event {
             Event::Start(_) => {
                 if depth == 0 {
@@ -20,22 +25,52 @@ fn xml(text: &str) -> Option<String> {
                 depth += 1;
             }
             Event::End(_) => {
-                depth = depth.checked_sub(1)?;
+                let Some(parent) = depth.checked_sub(1) else {
+                    break;
+                };
+                depth = parent;
             }
             Event::Empty(_) if depth == 0 => roots += 1,
             // 루트 밖에서는 공백만 허용한다. 루트 내부의 텍스트 공백과 엔티티는 그대로 전달된다.
             Event::Text(t) if depth == 0 && !t.as_ref().trim().is_empty() => {
-                return None;
+                break;
             }
-            Event::Eof => break,
+            // 기존 태그 사이의 줄바꿈은 Writer가 다시 만든다. 빈 요소의 텍스트 값은 유지한다.
+            Event::Text(t)
+                if normalize_spacing
+                    && t.as_ref().contains('\n')
+                    && t.as_ref().trim().is_empty()
+                    && !(after_start && text[position..].starts_with("</")) =>
+            {
+                consumed = position;
+                continue;
+            }
+            Event::Eof => {
+                complete = depth == 0 && roots == 1;
+                break;
+            }
             _ => {}
         }
-        writer.write_event(event).ok()?;
+        after_start = matches!(event, Event::Start(_));
+        if writer.write_event(event).is_err() {
+            break;
+        }
+        consumed = position;
     }
-    if depth != 0 || roots != 1 {
-        return None;
+    let mut formatted = String::from_utf8(writer.into_inner()).unwrap_or_default();
+    if consumed < text.len() {
+        formatted.push_str(&text[consumed..]);
     }
-    String::from_utf8(writer.into_inner()).ok()
+    (formatted, complete)
+}
+
+fn display_xml(text: &str, show_warning: bool) -> String {
+    let (formatted, complete) = format_xml(text);
+    if show_warning && !complete {
+        format!("{XML_WARNING}\n{formatted}")
+    } else {
+        formatted
+    }
 }
 // 같은 XML을 줄마다 다시 파싱하지 않고, 첫 루트가 끝나는 UTF-8 바이트 오프셋을 찾는다.
 fn xml_end(text: &str) -> Option<usize> {
@@ -103,19 +138,17 @@ pub(crate) fn xml_offset(line: &str) -> Option<usize> {
 }
 
 /// Extract XML directly from the original event, including XML inside a SQL value.
-pub fn xml_detail(raw: &str) -> String {
+pub fn xml_detail(raw: &str, show_warning: bool) -> String {
     let mut remaining = raw;
     let mut documents = Vec::new();
     while let Some(start) = xml_offset(remaining) {
         let candidate = &remaining[start..];
         let Some(end) = xml_end(candidate) else {
-            documents.push(format!(
-                "[XML incomplete/invalid: original payload below]\n{candidate}"
-            ));
+            documents.push(display_xml(candidate, show_warning));
             break;
         };
         let payload = &candidate[..end];
-        documents.push(xml(payload).unwrap_or_else(|| payload.to_string()));
+        documents.push(display_xml(payload, show_warning));
         remaining = &candidate[end..];
     }
     if documents.is_empty() {
@@ -202,14 +235,8 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
             if !prefix.trim().is_empty() {
                 result.push(prefix.trim_end().to_string());
             }
-            // XML 파싱에 실패하면 안내와 수집한 블록을 보여 줘 조사에 필요한 내용을 남긴다.
-            match xml(&block) {
-                Some(value) => result.push(value),
-                None => {
-                    result.push("[XML incomplete/invalid: original payload below]".into());
-                    result.push(block);
-                }
-            }
+            // 파싱 가능한 부분을 포맷하되 불완전한 원문도 보존한다.
+            result.push(display_xml(&block, true));
             if !suffix.trim().is_empty() {
                 result.push(suffix);
             }
@@ -261,18 +288,22 @@ mod tests {
     #[test]
     // 정상 XML 들여쓰기, 닫는 태그 오류, 한글과 엔티티 및 공백 보존을 함께 검사한다.
     fn xml_formats_and_preserves_invalid() {
-        assert!(
-            xml("<response><id>1</id></response>")
-                .unwrap()
-                .contains("\n  <id>")
+        let (formatted, complete) = format_xml("<response><id>1</id></response>");
+        assert!(complete);
+        assert_eq!(formatted, "<response>\n  <id>1</id>\n</response>");
+        assert_eq!(
+            format_xml("<response><id>1</id>"),
+            ("<response>\n  <id>1</id>".into(), false)
         );
-        assert!(xml("<response><id>1</id>").is_none());
-        assert!(xml("<a></b>").is_none());
+        assert_eq!(format_xml("<a></b><cut"), ("<a></b><cut".into(), false));
         assert!(
-            xml("<memo>배송 전 연락 &amp; 문 앞 보관</memo>")
-                .unwrap()
+            format_xml("<memo>배송 전 연락 &amp; 문 앞 보관</memo>")
+                .0
                 .contains("연락 &amp; 문")
         );
-        assert!(xml("<memo> </memo>").unwrap().contains("> </memo>"));
+        assert_eq!(
+            format_xml("<memo> </memo>"),
+            ("<memo> </memo>".into(), true)
+        );
     }
 }
