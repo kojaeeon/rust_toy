@@ -11,7 +11,7 @@
 | Ctrl+Alt+3 | Ctrl+Shift+F 전송 |
 
 `hotkeys.exe` 옆의 `hotkeys.toml`을 UTF-8로 편집하고 프로그램을 재시작하면
-변경된 설정을 읽습니다. 각 항목에 `text` 또는 `send` 중 하나를 지정하세요.
+변경된 설정을 읽습니다. 각 항목에 `text`, `send`, `exe` 중 하나를 지정하세요.
 
 ```toml
 [[hotkeys]]
@@ -21,7 +21,13 @@ text = "조회 완료"
 [[hotkeys]]
 trigger = "Ctrl+Alt+5"
 send = "Ctrl+Enter"
+
+[[hotkeys]]
+trigger = "Ctrl+Alt+6"
+exe = 'C:\Portable\OpenIDEA\openidea.exe'
 ```
+
+포터블 앱을 먼저 압축 해제하고 `exe`에 실행 파일을 지정하세요. Windows 경로를 작은따옴표로 감싸면 백슬래시를 그대로 쓸 수 있습니다. 상대 경로는 `hotkeys.toml`이 있는 폴더를 기준으로 해석하며, 작업 폴더는 EXE가 있는 폴더입니다.
 
 트리거에는 Ctrl, Alt, Shift, Win 중 하나 이상을 붙입니다. 문자 A–Z, 숫자 0–9,
 F1–F24, Tab, Enter, Space, Esc, Backspace, 방향키, Home, End, PageUp,
@@ -29,7 +35,7 @@ PageDown, Insert, Delete를 지정할 수 있습니다. Windows가 예약한 F12
 쓸 수 없습니다. Windows나 다른 프로그램이 이미 트리거를 등록한 경우 시작 시
 해당 조합을 표시합니다.
 
-단축키를 놓으면 포커스가 있는 창에 입력합니다. 대기 중 창이 바뀌면 그 입력을
+`text`와 `send`는 단축키를 놓으면 포커스가 있는 창에 입력합니다. 대기 중 창이 바뀌면 그 입력을
 취소합니다. Windows의 입력 권한 제한 때문에 일반 권한으로 실행한 Hotkeys는
 관리자 권한으로 실행 중인 앱에 입력을 보낼 수 없습니다.
 

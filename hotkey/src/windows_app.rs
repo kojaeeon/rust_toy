@@ -6,7 +6,8 @@ use std::fs;
 use std::io;
 use std::mem::{size_of, zeroed};
 use std::os::windows::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::ptr::{null, null_mut};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -192,6 +193,14 @@ unsafe extern "system" fn window_proc(
                 .checked_sub(1)
                 .filter(|id| *id < state.bindings.len())
             {
+                if let Action::Launch(exe) = &state.bindings[index].action {
+                    if let Err(error) = launch_command(exe, &state.config_path)
+                        .and_then(|mut command| command.spawn())
+                    {
+                        show_error(&format!("Cannot start {}: {error}", exe.display()));
+                    }
+                    return 0;
+                }
                 let target = GetForegroundWindow();
                 // 콜백을 막지 않고 20ms 타이머로 키 해제를 확인한다. 새 입력은 대기 슬롯을 덮어쓴다.
                 if !target.is_null() && SetTimer(window, SEND_TIMER, 20, None) != 0 {
@@ -235,6 +244,58 @@ unsafe extern "system" fn window_proc(
         _ => return DefWindowProcW(window, message, wparam, lparam),
     }
     0
+}
+
+fn launch_command(exe: &Path, config_path: &Path) -> io::Result<Command> {
+    let exe = if exe.is_absolute() {
+        exe.to_path_buf()
+    } else {
+        config_path.with_file_name(exe)
+    };
+    let folder = exe.parent().filter(|_| exe.is_absolute()).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The executable path must resolve to an absolute path",
+        )
+    })?;
+    let mut command = Command::new(&exe);
+    command.current_dir(folder);
+    Ok(command)
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    #[test]
+    fn relative_exe_uses_the_config_directory_and_its_own_working_directory() {
+        let command = launch_command(
+            Path::new(r"apps\포터블 앱\app.exe"),
+            Path::new(r"C:\Hotkeys\hotkeys.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            command.get_program(),
+            OsStr::new(r"C:\Hotkeys\apps\포터블 앱\app.exe")
+        );
+        assert_eq!(
+            command.get_current_dir(),
+            Some(Path::new(r"C:\Hotkeys\apps\포터블 앱"))
+        );
+        assert_eq!(command.get_args().count(), 0);
+    }
+
+    #[test]
+    fn windows_child_starts_in_the_exe_directory() {
+        let root = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+        let exe = root.join(r"System32\cmd.exe");
+        let mut command = launch_command(&exe, Path::new(r"C:\Unused\hotkeys.toml")).unwrap();
+        let output = command.args(["/D", "/C", "cd"]).output().unwrap();
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .eq_ignore_ascii_case(&exe.parent().unwrap().to_string_lossy()));
+    }
 }
 
 unsafe fn show_tray_menu(window: HWND, config_path: PathBuf) {
@@ -329,6 +390,7 @@ unsafe fn send_action(action: &Action) -> bool {
                 events.push(input(key, 0, key_flags(key) | KEYEVENTF_KEYUP));
             }
         }
+        Action::Launch(_) => return false,
     }
     // 반환값은 실제로 큐에 추가된 이벤트 수다. 일부만 추가되어도 실패로 판단한다.
     SendInput(

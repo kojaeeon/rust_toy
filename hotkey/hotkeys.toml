@@ -9,3 +9,8 @@ send = "F5"
 [[hotkeys]]
 trigger = "Ctrl+Alt+3"
 send = "Ctrl+Shift+F"
+
+# Example: uncomment and edit the path to launch a portable app.
+# [[hotkeys]]
+# trigger = "Ctrl+Alt+4"
+# exe = 'C:\Portable\OpenIDEA\openidea.exe'

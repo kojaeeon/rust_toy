@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 // Win32의 MOD_* 값과 일치하는 비트. 조합은 비트 OR(`|`)로 저장한다.
 pub const ALT: u32 = 1;
@@ -21,6 +22,7 @@ pub struct Chord {
 pub enum Action {
     Text(String),
     Send(Chord),
+    Launch(PathBuf),
 }
 
 #[derive(Debug)]
@@ -44,6 +46,7 @@ struct Entry {
     trigger: String,
     text: Option<String>,
     send: Option<String>,
+    exe: Option<PathBuf>,
 }
 
 // 마지막 토큰이 주키다. 뒤에서부터 읽으면 앞쪽의 보조키를 순서와 무관하게 합칠 수 있다.
@@ -127,13 +130,17 @@ pub fn parse(source: &str) -> Result<Vec<Binding>, String> {
         if !triggers.insert(chord) {
             return Err(format!("Duplicate trigger {:?}.", entry.trigger));
         }
-        // 튜플 패턴으로 text/send 두 필드의 조합을 검사한다. 둘 중 하나만 허용한다.
-        let action = match (entry.text, entry.send) {
-            (Some(text), None) if !text.is_empty() => Action::Text(text),
-            (None, Some(keys)) => Action::Send(parse_chord(&keys)?),
+        // 각 트리거에는 입력 또는 프로그램 실행 중 한 동작만 연결한다.
+        let action = match (entry.text, entry.send, entry.exe) {
+            (Some(text), None, None) if !text.is_empty() => Action::Text(text),
+            (None, Some(keys), None) => Action::Send(parse_chord(&keys)?),
+            (None, None, Some(exe)) if is_exe_path(&exe) => Action::Launch(exe),
+            (None, None, Some(_)) => {
+                return Err(format!("Set an .exe file path for {:?}.", entry.trigger));
+            }
             _ => {
                 return Err(format!(
-                    "Set exactly one non-empty text or send for {:?}.",
+                    "Set exactly one non-empty text, send, or exe for {:?}.",
                     entry.trigger
                 ))
             }
@@ -156,6 +163,13 @@ pub fn parse(source: &str) -> Result<Vec<Binding>, String> {
         }
     }
     Ok(bindings)
+}
+
+fn is_exe_path(path: &Path) -> bool {
+    !path.as_os_str().to_string_lossy().contains('\0')
+        && path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
 }
 
 #[cfg(test)]
@@ -196,5 +210,18 @@ mod tests {
         .is_err());
         assert!(parse("[[hotkeys]]\ntrigger = 'F5'\ntext = 'x'").is_err());
         assert!(parse("[[hotkeys]]\ntrigger = 'Ctrl+F12'\ntext = 'x'").is_err());
+    }
+
+    #[test]
+    fn accepts_portable_exe_paths_and_rejects_mixed_actions() {
+        let source = r"[[hotkeys]]
+trigger = 'Ctrl+Alt+4'
+exe = 'C:\포터블 앱\OpenIDEA\openidea.EXE'";
+        let bindings = parse(source).unwrap();
+        assert!(matches!(&bindings[0].action, Action::Launch(path)
+            if path == Path::new(r"C:\포터블 앱\OpenIDEA\openidea.EXE")));
+        assert!(parse(&format!("{source}\nsend = 'F5'")).is_err());
+        assert!(parse("[[hotkeys]]\ntrigger = 'Ctrl+Alt+4'\nexe = 'tool.cmd'").is_err());
+        assert!(parse("[[hotkeys]]\ntrigger = 'Ctrl+Alt+4'\nexe = ''").is_err());
     }
 }
