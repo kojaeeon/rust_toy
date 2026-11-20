@@ -11,6 +11,8 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
+use regex::Regex;
+use std::sync::LazyLock;
 
 const MUTED: Color = Color::Rgb(139, 153, 171);
 const ACCENT: Color = Color::Rgb(102, 217, 204);
@@ -28,6 +30,46 @@ fn level_color(level: Level) -> Color {
         _ => MUTED,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_xml_styles_tags_and_multiline_attributes_without_changing_text() {
+        let input =
+            "VALUES ('<Dataset\n id=\"result\"><Row>SELECT</Row></Dataset>')\nWHERE id < 100";
+        let lines = highlighted(input);
+        let text = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(text, input);
+        let spans: Vec<_> = lines.iter().flat_map(|line| &line.spans).collect();
+        for (token, color) in [
+            ("VALUES ", ACCENT),
+            ("<Dataset", Color::LightMagenta),
+            ("id", Color::Yellow),
+            ("\"result\"", Color::LightGreen),
+            ("SELECT", Color::White),
+            ("</Dataset>", Color::LightMagenta),
+            ("< ", Color::White),
+        ] {
+            assert!(
+                spans
+                    .iter()
+                    .any(|span| span.content == token && span.style.fg == Some(color)),
+                "missing expected style for {token:?}"
+            );
+        }
+    }
+}
 fn kind_color(kind: Kind) -> Color {
     match kind {
         Kind::Java => Color::LightBlue,
@@ -42,13 +84,23 @@ fn border(title: String, focus: bool) -> Block<'static> {
         .title(title)
         .border_style(Style::default().fg(if focus { ACCENT } else { Color::DarkGray }))
 }
-// XML, 예외 스택, SQL 메타데이터는 줄 단위로 색칠한다. 일반 줄은 SQL 키워드만 표시한다.
-fn highlighted(text: &str) -> Line<'static> {
-    let clean = safe(text);
-    let trimmed = clean.trim_start();
-    let color = if trimmed.starts_with('<') {
-        Color::LightMagenta
-    } else if trimmed.starts_with("at ")
+// 완성된 태그·선언·주석·CDATA만 찾는다. 'id < 100' 같은 비교 연산자는 매치하지 않는다.
+static XML_MARKUP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r#"(?s)<!--.*?-->|<!\[CDATA\[.*?\]\]>|"#,
+        r#"</[:_\p{L}][:_\p{L}\p{N}.\-]*\s*>|"#,
+        r#"<\??[:_\p{L}][:_\p{L}\p{N}.\-]*(?:\s+[:_\p{L}][:_\p{L}\p{N}.\-]*\s*=\s*(?:"[^"]*"|'[^']*'))*\s*[/?]?>"#,
+    ))
+    .unwrap()
+});
+
+static XML_ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"([:_\p{L}][:_\p{L}\p{N}.\-]*)\s*=\s*("[^"]*"|'[^']*')"#).unwrap()
+});
+
+fn plain_spans(text: &str, spans: &mut Vec<Span<'static>>) {
+    let trimmed = text.trim_start();
+    let color = if trimmed.starts_with("at ")
         || trimmed.starts_with("Caused by:")
         || trimmed.contains("Exception:")
     {
@@ -62,16 +114,16 @@ fn highlighted(text: &str) -> Line<'static> {
         Color::White
     };
     if color != Color::White {
-        return Line::styled(clean, Style::default().fg(color));
+        spans.push(Span::styled(text.to_string(), Style::default().fg(color)));
+        return;
     }
-    let mut spans = vec![];
     let keywords = [
         "SELECT", "FROM", "WHERE", "ORDER", "BY", "INSERT", "INTO", "VALUES", "UPDATE", "SET",
         "DELETE", "JOIN", "LEFT", "RIGHT", "ON", "AND", "OR", "AS", "WITH", "GROUP", "LIMIT",
         "DESC", "ASC", "NULL",
     ];
     // 토큰 경계 공백까지 보존해 서로 다른 색으로 그려도 문장 간격이 유지된다.
-    for token in clean.split_inclusive(char::is_whitespace) {
+    for token in text.split_inclusive(char::is_whitespace) {
         let word = token.trim().to_uppercase();
         spans.push(Span::styled(
             token.to_string(),
@@ -82,7 +134,61 @@ fn highlighted(text: &str) -> Line<'static> {
             }),
         ));
     }
-    Line::from(spans)
+}
+
+// XML과 SQL이 같은 줄에 있어도 태그, 속성명, 속성값마다 표시 스타일을 적용한다.
+fn highlighted(text: &str) -> Vec<Line<'static>> {
+    let clean = safe(text);
+    let mut lines = vec![Vec::new()];
+    let mut append = |text: &str, color: Option<Color>| {
+        for (index, part) in text.split('\n').enumerate() {
+            if index > 0 {
+                lines.push(Vec::new());
+            }
+            let spans = lines.last_mut().unwrap();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some(color) = color {
+                spans.push(Span::styled(part.to_string(), Style::default().fg(color)));
+            } else {
+                plain_spans(part, spans);
+            }
+        }
+    };
+    let tag_color = Some(Color::LightMagenta);
+    let mut offset = 0;
+    let mut depth = 0usize;
+    for found in XML_MARKUP.find_iter(&clean) {
+        append(
+            &clean[offset..found.start()],
+            (depth > 0).then_some(Color::White),
+        );
+        let tag = found.as_str();
+        if tag.starts_with("<!--") || tag.starts_with("<![CDATA[") {
+            append(tag, Some(MUTED));
+        } else {
+            let mut tag_offset = 0;
+            for attribute in XML_ATTRIBUTE.captures_iter(tag) {
+                let name = attribute.get(1).unwrap();
+                let value = attribute.get(2).unwrap();
+                append(&tag[tag_offset..name.start()], tag_color);
+                append(name.as_str(), Some(Color::Yellow));
+                append(&tag[name.end()..value.start()], tag_color);
+                append(value.as_str(), Some(Color::LightGreen));
+                tag_offset = value.end();
+            }
+            append(&tag[tag_offset..], tag_color);
+            if tag.starts_with("</") {
+                depth = depth.saturating_sub(1);
+            } else if !tag.starts_with("<?") && !tag.ends_with("/>") {
+                depth += 1;
+            }
+        }
+        offset = found.end();
+    }
+    append(&clean[offset..], (depth > 0).then_some(Color::White));
+    lines.into_iter().map(Line::from).collect()
 }
 pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
     // 화면이 너무 작으면 본문을 그리지 않고 크기 안내를 표시한다.
@@ -232,7 +338,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
         }
         lines.push(Line::raw(""));
     }
-    lines.extend(app.detail.lines().map(highlighted));
+    if !app.detail.is_empty() {
+        lines.extend(highlighted(&app.detail));
+    }
     let text = Text::from(lines);
     // 테두리 2칸을 뺀 내부 크기에서 줄바꿈 후 줄 수를 계산한다.
     let width = panes[1].width.saturating_sub(2).max(1);

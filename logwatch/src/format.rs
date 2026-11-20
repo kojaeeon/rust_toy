@@ -82,6 +82,47 @@ fn sql_offset(line: &str) -> Option<usize> {
         payload(&line[prefix..]).map(|offset| prefix + offset)
     })
 }
+
+fn xml_offset(line: &str) -> Option<usize> {
+    line.match_indices('<').find_map(|(offset, _)| {
+        let next = line[offset + 1..].chars().next()?;
+        (next.is_alphabetic() || matches!(next, '_' | ':' | '/' | '?' | '!')).then_some(offset)
+    })
+}
+
+#[derive(Clone, Copy, Default)]
+enum SqlContext {
+    #[default]
+    Statement,
+    Quoted(u8),
+    BlockComment,
+}
+
+impl SqlContext {
+    fn scan_line(&mut self, line: &str) {
+        let mut bytes = line.bytes().peekable();
+        while let Some(byte) = bytes.next() {
+            match (*self, byte, bytes.peek()) {
+                (Self::Statement, b'-', Some(b'-')) => break,
+                (Self::Statement, b'/', Some(b'*')) => {
+                    bytes.next();
+                    *self = Self::BlockComment;
+                }
+                (Self::Statement, b'\'' | b'"', _) => *self = Self::Quoted(byte),
+                (Self::Quoted(quote), _, _) if byte == quote => {
+                    if bytes.next_if_eq(&quote).is_none() {
+                        *self = Self::Statement;
+                    }
+                }
+                (Self::BlockComment, b'*', Some(b'/')) => {
+                    bytes.next();
+                    *self = Self::Statement;
+                }
+                _ => {}
+            }
+        }
+    }
+}
 /// 원문 모드에서는 저장한 문자열을 복제한다. 포맷 모드에서는 블록별 표시 형식을 만든다.
 pub fn detail(event: &LogEvent, formatted: bool) -> String {
     if !formatted {
@@ -96,7 +137,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
         let line = parts[i];
         // 문장 앞이나 `] ` 접두사 뒤에서 SQL을 먼저 찾는다. 비교 연산자 `<`도 SQL에 등장할 수 있다.
         let query_offset = sql_offset(line);
-        if let Some(start) = line.find('<').filter(|_| query_offset.is_none()) {
+        if let Some(start) = xml_offset(line).filter(|_| query_offset.is_none()) {
             let prefix = &line[..start];
             let mut end = i + 1;
             let mut block = line[start..].to_string();
@@ -144,19 +185,24 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
                 if start > 0 {
                     result.push(line[..start].trim().to_string());
                 }
-                let mut end = i + 1;
-                while end < parts.len()
-                    && !["Parameters:", "Elapsed:", "Rows:", "SQL:"]
-                        .iter()
-                        .any(|p| parts[end].trim_start().starts_with(p))
-                    && !parts[end].trim_start().starts_with('<')
-                {
-                    end += 1;
-                }
                 let mut query = line[start..].to_string();
-                for extra in &parts[i + 1..end] {
+                let mut context = SqlContext::default();
+                context.scan_line(&query);
+                let mut end = i + 1;
+                for extra in &parts[end..] {
+                    let trimmed = extra.trim_start();
+                    if matches!(context, SqlContext::Statement)
+                        && (["Parameters:", "Elapsed:", "Rows:", "SQL:"]
+                            .iter()
+                            .any(|prefix| trimmed.starts_with(prefix))
+                            || xml_offset(trimmed) == Some(0))
+                    {
+                        break;
+                    }
                     query.push('\n');
                     query.push_str(extra);
+                    context.scan_line(extra);
+                    end += 1;
                 }
                 // 표시의 가독성을 위한 포맷이다. SQL을 실행하거나 `?`에 바인드 값을 대입하지 않는다.
                 result.push(sqlformat::format(

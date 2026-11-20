@@ -89,6 +89,33 @@ fn mixed_payload_formatting_preserves_xml_text_and_sql_comparison() {
 }
 
 #[test]
+fn xml_in_multiline_jdbc_insert_is_preserved_as_sql() {
+    let mut parser = parser(10);
+    let lines = [
+        "2026-11-20 11:09:15,987 INFO [jdbc.sqlonly.sqlOccurred(741)] SQL::INSERT INTO AUDIT_LOG (MSG_TEXT, STATUS)",
+        "VALUES ('<Dataset id=\"result\">",
+        "<Row owner=\"O''Brien\">",
+        "Parameters: text inside XML",
+        "</Row>",
+        "</Dataset>', 'OK');",
+        "Parameters: ['OK']",
+        "<Response><Status>OK</Status></Response>",
+    ];
+    for (i, line) in lines.iter().enumerate() {
+        parser.push(line, i as u64 + 1, 1);
+    }
+    let event = &parser.events[0];
+    let formatted = logwatch::format::detail(event, true);
+    assert_eq!(event.kind, Kind::Sql);
+    assert!(!formatted.contains("incomplete/invalid"), "{formatted}");
+    let xml = "<Dataset id=\"result\">\n<Row owner=\"O''Brien\">\nParameters: text inside XML\n</Row>\n</Dataset>";
+    assert!(formatted.contains(xml), "{formatted}");
+    assert!(formatted.contains("Parameters: ['OK']"));
+    assert!(formatted.contains("<Response>\n  <Status>OK</Status>\n</Response>"));
+    assert_eq!(logwatch::format::detail(event, false), lines.join("\n"));
+}
+
+#[test]
 fn jdbc_cte_with_column_list_reaches_detail_end_without_truncation() {
     let mut parser = parser(10);
     let header = "2026-11-20 11:01:58,941 INFO [jdbc.sqlonly.sqlOccurred(741)] SQL::WITH TEMP1 (";
