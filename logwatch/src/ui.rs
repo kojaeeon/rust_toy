@@ -234,21 +234,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
     }
     lines.extend(app.detail.lines().map(highlighted));
     let text = Text::from(lines);
-    let block = border(title, app.detail_focus);
     // 테두리 2칸을 뺀 내부 크기에서 줄바꿈 후 줄 수를 계산한다.
     let width = panes[1].width.saturating_sub(2).max(1);
     let height = panes[1].height.saturating_sub(2);
-    let mut detail = Paragraph::new(text).block(block);
+    let mut detail = Paragraph::new(text);
     if app.wrap {
         detail = detail.wrap(Wrap { trim: false });
     }
-    let max_scroll = detail
-        .line_count(width)
+    let total_lines = detail.line_count(width);
+    let max_scroll = total_lines
         .saturating_sub(height as usize)
         .min(u16::MAX as usize) as u16;
     // 창 크기나 줄바꿈이 변해도 스크롤이 본문 끝을 넘지 않게 제한한다.
     app.scroll = app.scroll.min(max_scroll);
-    detail = detail.scroll((app.scroll, if app.wrap { 0 } else { app.horizontal }));
+    let title = if max_scroll > 0 && height > 0 {
+        let first = app.scroll as usize + 1;
+        let last = (app.scroll as usize + height as usize).min(total_lines);
+        format!(" {first}-{last}/{total_lines} |{}", title)
+    } else {
+        title
+    };
+    detail = detail
+        .block(border(title, app.detail_focus))
+        .scroll((app.scroll, if app.wrap { 0 } else { app.horizontal }));
     frame.render_widget(detail, panes[1]);
     let note = if !app.status.is_empty() {
         safe(&app.status)
@@ -277,7 +285,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, state: &mut ListState) {
             area.height.saturating_sub(2),
         );
         frame.render_widget(Clear, popup);
-        frame.render_widget(Paragraph::new("↑/↓ or j/k: select event; disables follow\nHome / End: oldest / newest (resume follow)\nTab: switch list / detail focus\nDetail: ↑↓ scroll, ←→ horizontal, PgUp/PgDn page\n/: edit search (case-insensitive, full raw event)\nEnter/Esc: finish search; Ctrl+U: clear while editing\nEsc outside search: clear search and request filter\nf: ALL → INFO+ → WARN+ → ERROR\nt: ALL → JAVA → SQL → XML\nr: filter by selected request/trace ID; press again to clear\nSpace: follow latest on/off (ingestion always continues)\nv: formatted / raw; w: wrap; l: right / bottom layout\nq or Ctrl+C: quit\n\nRaw bytes decoded by configured encoding. XML folding is not yet supported.\nPress any key to close.")
+        frame.render_widget(Paragraph::new("↑/↓ or j/k: select event; disables follow\nHome / End: oldest / newest (resume follow)\nTab: switch list / detail focus\nDetail: ↑↓ scroll, ←→ horizontal, PgUp/PgDn page, Home/End first/last\n/: edit search (case-insensitive, full raw event)\nEnter/Esc: finish search; Ctrl+U: clear while editing\nEsc outside search: clear search and request filter\nf: ALL → INFO+ → WARN+ → ERROR\nt: ALL → JAVA → SQL → XML\nr: filter by selected request/trace ID; press again to clear\nSpace: follow latest on/off (ingestion always continues)\nv: formatted / raw; w: wrap; l: right / bottom layout\nq or Ctrl+C: quit\n\nRaw bytes decoded by configured encoding. XML folding is not yet supported.\nPress any key to close.")
             .block(border(" Keys ".into(), true)).wrap(Wrap { trim: false }), popup);
     }
 }

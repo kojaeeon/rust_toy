@@ -58,18 +58,28 @@ fn xml_end(text: &str) -> Option<usize> {
 }
 // 대표적인 SQL 시작 토큰을 찾는 휴리스틱이다. 전체 SQL 문법의 유효성은 검사하지 않는다.
 fn sql_start(line: &str) -> bool {
-    let upper = line.trim().to_uppercase();
-    [
-        "SELECT ", "INSERT ", "UPDATE ", "DELETE ", "WITH ", "MERGE ", "SELECT", "INSERT",
-        "UPDATE", "DELETE",
-    ]
-    .iter()
-    .any(|prefix| {
-        if prefix.ends_with(' ') {
-            upper.starts_with(prefix)
-        } else {
-            upper == *prefix
+    line.split_whitespace().next().is_some_and(|word| {
+        ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH", "MERGE"]
+            .iter()
+            .any(|keyword| word.eq_ignore_ascii_case(keyword))
+    })
+}
+
+fn sql_offset(line: &str) -> Option<usize> {
+    let payload = |text: &str| {
+        let trimmed = text.trim_start();
+        for marker in ["SQL::", "SQL:"] {
+            if let Some(rest) = trimmed.strip_prefix(marker) {
+                let query = rest.trim_start();
+                // SQL:: 뒤의 블록 주석도 SQL 포맷에 함께 전달한다.
+                return (!query.is_empty()).then_some(text.len() - query.len());
+            }
         }
+        sql_start(trimmed).then_some(text.len() - trimmed.len())
+    };
+    payload(line).or_else(|| {
+        let prefix = line.find("] ")? + 2;
+        payload(&line[prefix..]).map(|offset| prefix + offset)
     })
 }
 /// 원문 모드에서는 저장한 문자열을 복제한다. 포맷 모드에서는 블록별 표시 형식을 만든다.
@@ -85,21 +95,15 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
     while i < parts.len() {
         let line = parts[i];
         // 문장 앞이나 `] ` 접두사 뒤에서 SQL을 먼저 찾는다. 비교 연산자 `<`도 SQL에 등장할 수 있다.
-        let sql_offset = if sql_start(line) {
-            Some(0)
-        } else {
-            line.find("] ")
-                .map(|p| p + 2)
-                .filter(|p| sql_start(&line[*p..]))
-        };
-        if let Some(start) = line.find('<').filter(|_| sql_offset.is_none()) {
+        let query_offset = sql_offset(line);
+        if let Some(start) = line.find('<').filter(|_| query_offset.is_none()) {
             let prefix = &line[..start];
             let mut end = i + 1;
             let mut block = line[start..].to_string();
             // 다음 SQL 또는 메타데이터 줄 전까지 XML 후보를 모은다.
             while end < parts.len() {
                 let extra = parts[end];
-                if sql_start(extra)
+                if sql_offset(extra).is_some()
                     || extra.trim() == "SQL:"
                     || ["Parameters:", "Elapsed:", "Rows:"]
                         .iter()
@@ -136,7 +140,7 @@ pub fn detail(event: &LogEvent, formatted: bool) -> String {
             i = end;
         } else {
             // 같은 줄의 요청 ID 같은 접두사는 별도로 보존하고 SQL 부분만 정렬한다.
-            if let Some(start) = sql_offset {
+            if let Some(start) = query_offset {
                 if start > 0 {
                     result.push(line[..start].trim().to_string());
                 }

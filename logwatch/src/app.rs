@@ -249,6 +249,7 @@ impl App {
                 self.scroll = 0;
                 self.horizontal = 0;
             }
+            KeyCode::End => self.scroll = u16::MAX,
             KeyCode::Left => self.horizontal = self.horizontal.saturating_sub(4),
             KeyCode::Right => self.horizontal = self.horizontal.saturating_add(4),
             _ => {}

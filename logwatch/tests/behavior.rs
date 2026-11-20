@@ -89,6 +89,58 @@ fn mixed_payload_formatting_preserves_xml_text_and_sql_comparison() {
 }
 
 #[test]
+fn jdbc_cte_with_column_list_reaches_detail_end_without_truncation() {
+    let mut parser = parser(10);
+    let header = "2026-11-20 11:01:58,941 INFO [jdbc.sqlonly.sqlOccurred(741)] SQL::WITH TEMP1 (";
+    parser.push(header, 1, 1);
+    for n in 1..=70 {
+        parser.push(&format!("    COL_{n},"), n + 1, 1);
+    }
+    parser.push("    FINAL_COLUMN", 72, 1);
+    parser.push(") AS (SELECT id FROM orders)", 73, 1);
+    parser.push(
+        "SELECT id FROM TEMP1 WHERE id < 100 ORDER BY final_marker",
+        74,
+        1,
+    );
+    let event = &parser.events[0];
+    assert_eq!(parser.events.len(), 1);
+    assert_eq!(event.kind, Kind::Sql);
+    assert_eq!(event.level, Level::Info);
+    assert_eq!(event.logger, "jdbc.sqlonly.sqlOccurred(741)");
+    assert_eq!(event.last_line, 74);
+    assert_eq!(parser.truncated, 0);
+    let formatted = logwatch::format::detail(event, true);
+    assert!(formatted.starts_with("SQL::\nWITH"));
+    assert!(formatted.contains("final_marker"));
+    assert!(logwatch::format::detail(event, false).starts_with(header));
+
+    let tail = Tail::new("unused.log".into(), "utf-8").unwrap();
+    let mut app = App::new(parser, tail, "unused.log".into(), &Viewer::default());
+    let mut terminal = Terminal::new(TestBackend::new(130, 24)).unwrap();
+    let mut state = ListState::default();
+    let mut draw = |app: &mut App| {
+        terminal
+            .draw(|f| logwatch::ui::draw(f, app, &mut state))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>()
+    };
+    let first = draw(&mut app);
+    assert!(first.contains("1-"));
+    assert!(!first.contains("final_marker"));
+    key(&mut app, KeyCode::Tab);
+    key(&mut app, KeyCode::End);
+    assert!(draw(&mut app).contains("final_marker"));
+    assert!(app.scroll > 0);
+}
+
+#[test]
 // 첫 폴링에는 한글 바이트 일부만 있다. 다음 폴링에서 CRLF까지 오면 온전한 문자열을 기대한다.
 fn append_waits_for_complete_utf8_and_crlf() {
     let d = tempdir().unwrap();

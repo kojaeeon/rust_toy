@@ -61,6 +61,7 @@ pub struct LogEvent {
 pub struct Parser {
     start: Regex,
     header: Regex,
+    jdbc_header: Regex,
     request: Regex,
     sql: Regex,
     // 뒤에 이벤트를 추가하고 보관 한도를 넘으면 앞에서 빼기 좋은 양방향 큐다.
@@ -77,6 +78,9 @@ impl Parser {
             start: Regex::new(pattern)?,
             header: Regex::new(
                 r"^(?P<time>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+(?:\[[^\]]*\]\s+)?(?P<logger>.*?)\s+-\s*(?P<message>.*)$",
+            )?,
+            jdbc_header: Regex::new(
+                r"^(?P<time>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(?P<level>TRACE|DEBUG|INFO|WARN|ERROR|FATAL)\s+\[(?P<logger>[^\]]+)\]\s+(?P<message>SQL::?.*)$",
             )?,
             request: Regex::new(r"(?:requestId|traceId)=([^\s\]]+)")?,
             sql: Regex::new(
@@ -98,7 +102,11 @@ impl Parser {
         let line = line.trim_start_matches('\u{feff}');
         if self.start.is_match(line) || !self.continuation {
             // 헤더가 일치하지 않아도 줄 자체는 보관한다. 이름 있는 캡처를 소유 문자열로 복사한다.
-            let caps = self.header.captures(line);
+            // JDBC SQL 로그는 대괄호 안에 로거를 기록하고 " - " 구분자 없이 SQL:을 붙인다.
+            let caps = self
+                .jdbc_header
+                .captures(line)
+                .or_else(|| self.header.captures(line));
             let part = |name: &str| {
                 caps.as_ref()
                     .and_then(|c| c.name(name))
@@ -158,6 +166,7 @@ impl Parser {
             let lower_logger = event.logger.to_lowercase();
             // SQL 단서가 먼저 적용된다. XML이나 스택이 섞여도 detail()은 본문 전체를 처리한다.
             event.kind = if lower_logger.contains("sql")
+                || event.message.starts_with("SQL:")
                 || self.sql.is_match(&event.message)
                 || event
                     .raw
